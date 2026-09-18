@@ -23,6 +23,16 @@
   #back { transform:rotateY(180deg); z-index:1; }
   #app.flipped #front { transform:rotateY(-180deg); z-index:1; }
   #app.flipped #back { transform:rotateY(0deg); z-index:2; }
+
+  /* Prevent hits on the hidden face of the card (fixes long-press playing the other page's video) */
+  #app:not(.flipped) #back,
+  #app.flipped #front {
+    pointer-events: none;
+  }
+  #app:not(.flipped) #front,
+  #app.flipped #back {
+    pointer-events: auto;
+  }
   .page img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; }
   .card-hit {
     position:absolute; border:0; background:transparent; padding:0; margin:0;
