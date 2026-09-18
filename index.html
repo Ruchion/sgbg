@@ -11,13 +11,15 @@
   html,body { margin:0; width:100%; height:100%; background:#111; overflow:hidden; font-family:Arial,sans-serif; }
   body { display:flex; align-items:center; justify-content:center; }
   #app { position:relative; height:100dvh; width:min(100vw, 77.25dvh); max-width:100vw; }
-  #app { perspective:1400px; }
+  #app { perspective:1400px; -webkit-perspective:1400px; }
   .page {
     position:absolute; inset:0; display:block;
     backface-visibility:hidden; -webkit-backface-visibility:hidden;
-    transform-style:preserve-3d;
+    transform-style:preserve-3d; -webkit-transform-style:preserve-3d;
     transition:transform .62s cubic-bezier(.22,.7,.2,1);
     will-change:transform;
+    /* iOS Safari sometimes needs this to keep the correct face */
+    -webkit-transform: translateZ(0);
   }
   #front { transform:rotateY(0deg); z-index:2; }
   #back { transform:rotateY(180deg); z-index:1; }
@@ -90,10 +92,22 @@
   #video-overlay.active { display: flex; }
   #video-overlay video {
     max-width: 100%;
-    max-height: calc(100% - 70px);
+    max-height: calc(100% - 110px);
+    width: 100%;
     border-radius: 12px;
     background: #000;
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    /* help iOS */
+    object-fit: contain;
+    -webkit-playsinline: true;
+  }
+  #video-error {
+    color: #ff8a8a;
+    font-weight: 700;
+    text-align: center;
+    max-width: 90%;
+    font-size: 15px;
+    padding: 0 8px;
   }
   #video-overlay .video-title {
     color: #fff;
@@ -225,7 +239,10 @@
 
 <div id="video-overlay">
   <div class="video-title" id="video-title"></div>
-  <video id="player" controls playsinline webkit-playsinline></video>
+  <video id="player" controls playsinline webkit-playsinline preload="metadata">
+    <!-- sources set dynamically -->
+  </video>
+  <div id="video-error" style="display:none;color:#ff8a8a;font-weight:700;text-align:center;max-width:90%;"></div>
   <button id="close-video">Close</button>
 </div>
 
@@ -276,41 +293,71 @@ function sanitizeFilename(name) {
     .trim();
 }
 
-function getVideoSrc(btn) {
-  // Video lives in the same directory as this HTML (root of the site)
-  // Prefer .webm as requested
-  const name = sanitizeFilename(getGameName(btn));
-  return encodeURI(name + '.webm');
+function getBaseName(btn) {
+  return sanitizeFilename(getGameName(btn));
 }
 
 function playVideo(btn) {
   const name = getGameName(btn);
-  const src = getVideoSrc(btn);
+  const base = getBaseName(btn);
   const overlay = document.getElementById('video-overlay');
   const player = document.getElementById('player');
   const title = document.getElementById('video-title');
+  const errEl = document.getElementById('video-error');
 
   title.textContent = name;
-  player.src = src;
+  errEl.style.display = 'none';
+  errEl.textContent = '';
+
+  // Clear previous sources
+  player.pause();
+  player.removeAttribute('src');
+  while (player.firstChild) player.removeChild(player.firstChild);
+
+  // Prefer MP4 for iOS/Safari compatibility, also offer WebM
+  const mp4 = document.createElement('source');
+  mp4.src = encodeURI(base + '.mp4');
+  mp4.type = 'video/mp4';
+  player.appendChild(mp4);
+
+  const webm = document.createElement('source');
+  webm.src = encodeURI(base + '.webm');
+  webm.type = 'video/webm';
+  player.appendChild(webm);
+
   player.load();
   overlay.classList.add('active');
 
-  // Try to play; some browsers need a user gesture (long-press counts)
+  // iOS Safari often blocks play() that originates from a setTimeout (long-press).
+  // We still try; if it fails the user can tap the native play button (fresh gesture).
   const playPromise = player.play();
-  if (playPromise && playPromise.catch) {
+  if (playPromise && typeof playPromise.catch === 'function') {
     playPromise.catch(err => {
-      console.warn('Autoplay/play failed:', err);
-      // Still show the player so user can press play manually
+      console.warn('Autoplay blocked or failed (common on iPad):', err);
+      errEl.textContent = 'Tap the play button to start the video';
+      errEl.style.display = 'block';
     });
   }
+
+  // Also surface load errors
+  player.onerror = () => {
+    errEl.textContent = 'Video not found or cannot be played. Tried: ' + base + '.mp4 / .webm';
+    errEl.style.display = 'block';
+  };
 }
 
 function closeVideo() {
   const overlay = document.getElementById('video-overlay');
   const player = document.getElementById('player');
+  const errEl = document.getElementById('video-error');
   player.pause();
   player.removeAttribute('src');
+  while (player.firstChild) player.removeChild(player.firstChild);
   player.load();
+  if (errEl) {
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+  }
   overlay.classList.remove('active');
 }
 
