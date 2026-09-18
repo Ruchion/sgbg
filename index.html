@@ -57,6 +57,47 @@
   @media (orientation:landscape) {
     #app { height:100dvh; width:auto; aspect-ratio:1545/2000; }
   }
+
+  /* Video overlay */
+  #video-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0,0,0,0.92);
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 12px;
+    gap: 12px;
+  }
+  #video-overlay.active { display: flex; }
+  #video-overlay video {
+    max-width: 100%;
+    max-height: calc(100% - 70px);
+    border-radius: 12px;
+    background: #000;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  #video-overlay .video-title {
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    text-align: center;
+    max-width: 90%;
+  }
+  #close-video {
+    border: 0;
+    border-radius: 12px;
+    background: #ff3b5c;
+    color: white;
+    font-weight: 800;
+    padding: 12px 24px;
+    font-size: 16px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
 </style>
 </head>
 <body>
@@ -165,14 +206,27 @@
   <button class="control flip" id="flip">MORE GAMES ↔</button>
 </div>
 
+
+<div id="video-overlay">
+  <div class="video-title" id="video-title"></div>
+  <video id="player" controls playsinline webkit-playsinline></video>
+  <button id="close-video">Close</button>
+</div>
+
 <script>
 const selections = new Set();
 let page = 'front';
 let touchStartX = null;
 let touchStartY = null;
 let swipeHappened = false;
+let longPressTimer = null;
+let longPressTriggered = false;
+let longPressStartX = 0;
+let longPressStartY = 0;
+const LONG_PRESS_MS = 550;
+const MOVE_THRESHOLD = 12;
 
-function key(page,index) { return page + ':' + index; }
+function key(page, index) { return page + ':' + index; }
 
 function update() {
   document.querySelectorAll('.card-hit').forEach(btn => {
@@ -190,11 +244,73 @@ function setPage(nextPage) {
 
 function flip() { setPage(page === 'front' ? 'back' : 'front'); }
 
+function getGameName(btn) {
+  const label = btn.getAttribute('aria-label') || '';
+  // Browser already decodes &#x27; etc. to proper characters
+  return label.replace(/^Select\s+/i, '').trim();
+}
+
+function sanitizeFilename(name) {
+  // Produce a clean matching filename while staying close to the game title
+  return name
+    .replace(/[<>:"/\\|?*]/g, '')   // illegal filename chars
+    .replace(/\.+$/, '')            // trailing periods
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getVideoSrc(btn) {
+  // Video lives in the same directory as this HTML (root of the site)
+  const name = sanitizeFilename(getGameName(btn));
+  return encodeURI(name + '.mp4');
+}
+
+function playVideo(btn) {
+  const name = getGameName(btn);
+  const src = getVideoSrc(btn);
+  const overlay = document.getElementById('video-overlay');
+  const player = document.getElementById('player');
+  const title = document.getElementById('video-title');
+
+  title.textContent = name;
+  player.src = src;
+  player.load();
+  overlay.classList.add('active');
+
+  // Try to play; some browsers need a user gesture (long-press counts)
+  const playPromise = player.play();
+  if (playPromise && playPromise.catch) {
+    playPromise.catch(err => {
+      console.warn('Autoplay/play failed:', err);
+      // Still show the player so user can press play manually
+    });
+  }
+}
+
+function closeVideo() {
+  const overlay = document.getElementById('video-overlay');
+  const player = document.getElementById('player');
+  player.pause();
+  player.removeAttribute('src');
+  player.load();
+  overlay.classList.remove('active');
+}
+
+function clearLongPress() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}
+
+// Card click = toggle selection (unless long-press or swipe happened)
 document.querySelectorAll('.card-hit').forEach(btn => {
   btn.addEventListener('click', (e) => {
-    if (swipeHappened) {
+    if (swipeHappened || longPressTriggered) {
       swipeHappened = false;
+      longPressTriggered = false;
       e.preventDefault();
+      e.stopPropagation();
       return;
     }
     const k = key(btn.dataset.page, btn.dataset.index);
@@ -202,10 +318,44 @@ document.querySelectorAll('.card-hit').forEach(btn => {
     else selections.add(k);
     update();
   });
+
+  // Long-press detection
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    longPressTriggered = false;
+    longPressStartX = e.clientX;
+    longPressStartY = e.clientY;
+    clearLongPress();
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      longPressTriggered = true;
+      // Prevent the upcoming click from selecting
+      playVideo(btn);
+    }, LONG_PRESS_MS);
+  });
+
+  btn.addEventListener('pointermove', (e) => {
+    if (!longPressTimer) return;
+    const dx = e.clientX - longPressStartX;
+    const dy = e.clientY - longPressStartY;
+    if (Math.abs(dx) > MOVE_THRESHOLD || Math.abs(dy) > MOVE_THRESHOLD) {
+      clearLongPress();
+    }
+  });
+
+  btn.addEventListener('pointerup', clearLongPress);
+  btn.addEventListener('pointercancel', clearLongPress);
+  btn.addEventListener('pointerleave', clearLongPress);
 });
 
 document.getElementById('flip').addEventListener('click', flip);
 document.getElementById('clear').addEventListener('click', () => { selections.clear(); update(); });
+document.getElementById('close-video').addEventListener('click', closeVideo);
+
+// Close video on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeVideo();
+});
 
 // iPhone/iPad-friendly swipe handling. Swiping can start directly on a game card.
 const app = document.getElementById('app');
@@ -214,7 +364,7 @@ app.addEventListener('pointerdown', (e) => {
   touchStartX = e.clientX;
   touchStartY = e.clientY;
   swipeHappened = false;
-}, {passive:true});
+}, {passive: true});
 
 app.addEventListener('pointerup', (e) => {
   if (touchStartX === null) return;
@@ -224,132 +374,19 @@ app.addEventListener('pointerup', (e) => {
 
   if (Math.abs(dx) >= 45 && Math.abs(dx) > Math.abs(dy) * 1.15) {
     swipeHappened = true;
+    clearLongPress(); // cancel any pending long-press
     flip();
     setTimeout(() => { swipeHappened = false; }, 500);
   }
-}, {passive:true});
+}, {passive: true});
 
 // Prevent Safari's native page swipe/scroll from fighting the selector.
-app.addEventListener('touchmove', (e) => { e.preventDefault(); }, {passive:false});
+app.addEventListener('touchmove', (e) => { e.preventDefault(); }, {passive: false});
 
-update();
 update();
 </script>
 
-<script>
-  // 1. Storage & Channel Setup
-  const STORAGE_KEY = 'app_selected_cards';
-  const syncChannel = new BroadcastChannel('card_selection_sync');
-  
-  // Load saved selections from localStorage (or start empty)
-  let selectedCards = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
 
-  // Check if current URL is viewing the admin dashboard (e.g., index.html#admin)
-  const isAdminView = window.location.hash === '#admin';
-
-  // 2. Save and Broadcast State Updates
-  function saveAndSyncState(newSelections) {
-    selectedCards = newSelections;
-    
-    // Save locally
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(selectedCards));
-    
-    // Broadcast instantly to all other open tabs/pages
-    syncChannel.postMessage({
-      type: 'SELECTION_UPDATE',
-      selectedCards: selectedCards
-    });
-
-    // Update current page view
-    renderUI();
-  }
-
-  // 3. Listen for Live Updates from Other Tabs
-  syncChannel.onmessage = (event) => {
-    if (event.data && event.data.type === 'SELECTION_UPDATE') {
-      selectedCards = event.data.selectedCards;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(selectedCards));
-      renderUI();
-    }
-  };
-
-  // 4. Update UI Elements across main page and admin view
-  function renderUI() {
-    // Sync main card UI selection highlights
-    document.querySelectorAll('.card-hit').forEach((card, index) => {
-      if (selectedCards.includes(index)) {
-        card.classList.add('selected');
-      } else {
-        card.classList.remove('selected');
-      }
-    });
-
-    // Sync counters if present
-    const countEl = document.getElementById('count');
-    if (countEl) countEl.textContent = `${selectedCards.length} Selected`;
-
-    // Render Admin View if open
-    const adminList = document.getElementById('admin-selection-list');
-    const adminCount = document.getElementById('admin-count');
-    
-    if (adminCount) adminCount.textContent = selectedCards.length;
-    if (adminList) {
-      adminList.innerHTML = '';
-      if (selectedCards.length === 0) {
-        adminList.innerHTML = '<li>No pages selected</li>';
-      } else {
-        selectedCards.forEach(id => {
-          const li = document.createElement('li');
-          li.textContent = `Card Index: ${id}`;
-          adminList.appendChild(li);
-        });
-      }
-    }
-  }
-
-  // 5. Global Click Event Listener for Cards & Reset Controls
-  document.addEventListener('click', (e) => {
-    // Card toggle handler
-    const card = e.target.closest('.card-hit');
-    if (card) {
-      const cards = Array.from(document.querySelectorAll('.card-hit'));
-      const cardId = cards.indexOf(card);
-      
-      const index = selectedCards.indexOf(cardId);
-      let updated = [...selectedCards];
-      
-      if (index > -1) {
-        updated.splice(index, 1); // Deselect
-      } else {
-        updated.push(cardId); // Select
-      }
-      
-      saveAndSyncState(updated);
-    }
-
-    // Clear all selections button handler
-    if (e.target.matches('#reset-selections-btn')) {
-      saveAndSyncState([]);
-    }
-  });
-
-  // Render state on initial load
-  document.addEventListener('DOMContentLoaded', () => {
-    if (isAdminView) {
-      document.body.classList.add('admin-mode');
-    }
-    renderUI();
-  });
-  
-  // Update view mode if hash changes (#admin)
-  window.addEventListener('hashchange', () => {
-    if (window.location.hash === '#admin') {
-      document.body.classList.add('admin-mode');
-    } else {
-      document.body.classList.remove('admin-mode');
-    }
-  });
-</script>
 
 </body>
 </html>
