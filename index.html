@@ -293,13 +293,106 @@ function sanitizeFilename(name) {
     .trim();
 }
 
-function getBaseName(btn) {
-  return sanitizeFilename(getGameName(btn));
+// Exact filenames from the GitHub repo (https://github.com/Ruchion/sgbg)
+
+// Exact filenames – supports both the new names (no underscores) and the old underscore versions
+
+// Current filenames in the repo (no spaces, no underscores)
+const VIDEO_MAP = {
+  "Blockchain": "Blockchain.webm",
+  "Build It Up": "BuildItUp.webm",
+  "Chip Shot": "ChipShot.webm",
+  "Common Bonds": "CommonBonds.webm",
+  "Drawing in the Dark": "DrawingInTheDark.webm",
+  "4 for Four": "4forFour.webm",
+  "It's Elementary": "ItsElementary.webm",
+  "Letter Roll": "LetterRoll.webm",
+  "Range Finders": "RangeFinders.webm",
+
+  "Ready, Bet, Go!": "ReadyBetGo.webm",
+  "Remember Me": "RememberMe.webm",
+  "Major Miners": "MajorMiners.webm",
+  "Mystery Menu": "MysteryMenu.webm",
+  "Big Wheel. Bigger Risks.": "BigWheelBiggerRisks.webm",
+  "Split Decision": "SplitDecision.webm",
+  "The Grid": "TheGrid.webm",
+  "Trivia Temple": "TriviaTemple.webm",
+  "Wait for Me": "WaitForMe.webm"
+};
+
+// Keep older naming styles as fallbacks
+const VIDEO_MAP_FALLBACK = {
+  "Blockchain": "Blockchain.webm",
+  "Build It Up": "Build_It_Up.webm",
+  "Chip Shot": "Chip_Shot.webm",
+  "Common Bonds": "Common_Bonds.webm",
+  "Drawing in the Dark": "Drawing_in_the_Dark.webm",
+  "4 for Four": "4_for_Four.webm",
+  "It's Elementary": "Its_Elementary.webm",
+  "Letter Roll": "Letter_Roll.webm",
+  "Range Finders": "Range_Finders.webm",
+  "Ready, Bet, Go!": "Ready_Bet_Go.webm",
+  "Remember Me": "Remember_Me.webm",
+  "Major Miners": "Major_Miners.webm",
+  "Mystery Menu": "Chip_Mystery_Menu_web.webm",
+  "Big Wheel. Bigger Risks.": "Spin_Out.webm",
+  "Split Decision": "Split_Decision.webm",
+  "The Grid": "The_Grid.webm",
+  "Trivia Temple": "Trivia_Temple.webm",
+  "Wait for Me": "Wait_For_Me.webm",
+
+  // Also try with spaces (just in case)
+  "Build It Up": "Build It Up.webm",
+  "Chip Shot": "Chip Shot.webm",
+  "Common Bonds": "Common Bonds.webm",
+  "Drawing in the Dark": "Drawing in the Dark.webm",
+  "4 for Four": "4 for Four.webm",
+  "It's Elementary": "It's Elementary.webm",
+  "Letter Roll": "Letter Roll.webm",
+  "Range Finders": "Range Finders.webm",
+  "Ready, Bet, Go!": "Ready, Bet, Go!.webm",
+  "Remember Me": "Remember Me.webm",
+  "Major Miners": "Major Miners.webm",
+  "Mystery Menu": "Mystery Menu.webm",
+  "Split Decision": "Split Decision.webm",
+  "The Grid": "The Grid.webm",
+  "Trivia Temple": "Trivia Temple.webm",
+  "Wait for Me": "Wait for Me.webm"
+};
+
+function getVideoFilename(btn) {
+  const name = getGameName(btn);
+
+  // 1. Exact match in primary map
+  if (VIDEO_MAP[name]) return VIDEO_MAP[name];
+
+  // 2. Exact match in fallback map
+  if (VIDEO_MAP_FALLBACK[name]) return VIDEO_MAP_FALLBACK[name];
+
+  // 3. Apostrophe-normalized lookup
+  const noApos = name.replace(/[''′]/g, '');
+  for (const map of [VIDEO_MAP, VIDEO_MAP_FALLBACK]) {
+    for (const [key, file] of Object.entries(map)) {
+      if (key.replace(/[''′]/g, '') === noApos) return file;
+    }
+  }
+
+  // 4. Generate a no-space PascalCase-style name as last resort
+  // "Chip Shot" → "ChipShot.webm", "Drawing in the Dark" → "DrawingInTheDark.webm"
+  const generated = name
+    .replace(/[''′!.]/g, '')
+    .split(/\s+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join('') + '.webm';
+  return generated;
 }
+
+
+
 
 function playVideo(btn) {
   const name = getGameName(btn);
-  const base = getBaseName(btn);
+  const filename = getVideoFilename(btn);
   const overlay = document.getElementById('video-overlay');
   const player = document.getElementById('player');
   const title = document.getElementById('video-title');
@@ -309,41 +402,56 @@ function playVideo(btn) {
   errEl.style.display = 'none';
   errEl.textContent = '';
 
-  // Clear previous sources
+  // Clear previous
   player.pause();
   player.removeAttribute('src');
+  player.onerror = null;
+  player.onloadeddata = null;
   while (player.firstChild) player.removeChild(player.firstChild);
 
-  // Prefer MP4 for iOS/Safari compatibility, also offer WebM
-  const mp4 = document.createElement('source');
-  mp4.src = encodeURI(base + '.mp4');
-  mp4.type = 'video/mp4';
-  player.appendChild(mp4);
+  if (!filename) {
+    errEl.textContent = 'No video mapping found for: ' + name;
+    errEl.style.display = 'block';
+    overlay.classList.add('active');
+    return;
+  }
 
-  const webm = document.createElement('source');
-  webm.src = encodeURI(base + '.webm');
-  webm.type = 'video/webm';
-  player.appendChild(webm);
+  // Single source – exact file from the repo
+  const source = document.createElement('source');
+  source.src = encodeURI(filename);
+  source.type = 'video/webm';
+  player.appendChild(source);
+
+  let loadSucceeded = false;
+  player.onloadeddata = () => {
+    loadSucceeded = true;
+    errEl.style.display = 'none';
+  };
+  player.onerror = () => {
+    errEl.innerHTML = 'Could not load video:<br><code>' + filename + '</code>';
+    errEl.style.display = 'block';
+  };
 
   player.load();
   overlay.classList.add('active');
 
-  // iOS Safari often blocks play() that originates from a setTimeout (long-press).
-  // We still try; if it fails the user can tap the native play button (fresh gesture).
+  // Try autoplay (often blocked on iPad from long-press timer)
   const playPromise = player.play();
   if (playPromise && typeof playPromise.catch === 'function') {
     playPromise.catch(err => {
-      console.warn('Autoplay blocked or failed (common on iPad):', err);
-      errEl.textContent = 'Tap the play button to start the video';
+      console.warn('Autoplay blocked (normal on iPad):', err);
+      errEl.textContent = 'Tap the play button to start';
       errEl.style.display = 'block';
     });
   }
 
-  // Also surface load errors
-  player.onerror = () => {
-    errEl.textContent = 'Video not found or cannot be played. Tried: ' + base + '.mp4 / .webm';
-    errEl.style.display = 'block';
-  };
+  // Safety timeout
+  setTimeout(() => {
+    if (!loadSucceeded && player.readyState < 2) {
+      errEl.innerHTML = 'Could not load video:<br><code>' + filename + '</code>';
+      errEl.style.display = 'block';
+    }
+  }, 2000);
 }
 
 function closeVideo() {
